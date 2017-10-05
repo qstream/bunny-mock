@@ -16,7 +16,7 @@ module BunnyMock
     end
 
     def create_channel
-      BunnyMock::Channel.new
+      @channel ||= BunnyMock::Channel.new
     end
 
     def direct(name, *args)
@@ -33,12 +33,24 @@ module BunnyMock
   end # class Bunny
 
   class Channel
-    def direct(name)
-      BunnyMock::Exchange.new(name)
+    def exchanges
+      @exchanges ||= {}
     end
 
-    def queue(name, *args)
-      BunnyMock::Queue.new(*args)
+    def queues
+      @queues ||= {}
+    end
+
+    def direct(name)
+      exchanges[name] ||= BunnyMock::Exchange.new(name)
+    end
+
+    def topic(name, attr = {})
+      exchanges[name] ||= BunnyMock::Exchange.new(name)
+    end
+
+    def queue(name, args)
+      queues[name] ||= BunnyMock::Queue.new(name, args)
     end
   end
 
@@ -50,7 +62,7 @@ module BunnyMock
   end
 
   class Queue
-    attr_accessor :name, :attrs, :messages, :delivery_count
+    attr_accessor :name, :attrs, :messages, :delivery_count, :block
     def initialize(name, attrs = {})
       self.name           = name
       self.attrs          = attrs.dup
@@ -60,14 +72,18 @@ module BunnyMock
 
     def bind(exchange, *args)
       exchange.queues << self
+      self
     end
 
     # Note that this doesn't block waiting for messages like the real world.
     def subscribe(*args, &block)
-      while message = messages.shift
-        self.delivery_count += 1
-        yield({:payload => message})
-      end
+      # puts "#{self}(#{name}).subscribe"
+      self.block = block
+    end
+
+    def enqueue(msg)
+      # puts "#{self}.queue(#{msg})"
+      block.call({:payload => msg})
     end
 
     def default_consumer
@@ -112,7 +128,10 @@ module BunnyMock
     end
 
     def publish(msg, msg_attrs = {})
-      queues.each { |q| q.messages << msg }
+      queues.each do |q|
+        # puts "publishing #{msg} to #{q}(#{q.name})"
+        q.enqueue(msg)
+      end
     end
 
     def bound_to?(queue_name)
